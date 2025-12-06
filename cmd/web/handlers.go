@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/Arya-F/snippetbox/internal/models"
 	"github.com/Arya-F/snippetbox/internal/validator"
-	"github.com/go-playground/form/v4"
 )
 
 type snippetCreateForm struct {
@@ -97,24 +95,6 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 	app.sessionManager.Put(r.Context(), "flash", "Snippet successfully created")
 
 	http.Redirect(w, r, fmt.Sprintf("/snippet/view/%d", id), http.StatusSeeOther)
-}
-
-func (app *application) decodePostForm(r *http.Request, dst any) error {
-	err := r.ParseForm()
-	if err != nil {
-		return nil
-	}
-
-	err = app.formDecoder.Decode(dst, r.PostForm)
-	if err != nil {
-		var invalidDecoderError *form.InvalidDecoderError
-		if errors.As(err, &invalidDecoderError) {
-			panic(err)
-		}
-		return err
-	}
-
-	return nil
 }
 
 type userSignUpForm struct {
@@ -236,27 +216,12 @@ func (app *application) userLogoutPost(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (app *application) authenticate(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := app.sessionManager.GetInt(r.Context(), "authenticatedUserID")
-		if id == 0 {
-			next.ServeHTTP(w, r)
-			return
-		}
-		exists, err := app.users.Exists(id)
-		if err != nil {
-			app.serverError(w, r, err)
-			return
-		}
-
-		if exists {
-			ctx := context.WithValue(r.Context(), isAuthenticatedContextKey, true)
-			r = r.WithContext(ctx)
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func ping(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
+}
+
+func (app *application) about(w http.ResponseWriter, r *http.Request) {
+	data := app.newTemplateData(r)
+
+	app.render(w, r, http.StatusOK, "about.tmpl", data)
 }

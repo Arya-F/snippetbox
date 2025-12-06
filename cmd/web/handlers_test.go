@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"testing"
@@ -99,10 +98,6 @@ func TestUserSignup(t *testing.T) {
 	defer ts.Close()
 	_, _, body := ts.get(t, "/user/signup")
 	validCSRFToken := extractCSRFToken(t, body)
-
-	fmt.Println(body)
-	fmt.Println(validCSRFToken)
-
 	const (
 		validName     = "Bob"
 		validPassword = "validPa$$word"
@@ -197,13 +192,6 @@ func TestUserSignup(t *testing.T) {
 			form.Add("password", tt.userPassword)
 			form.Add("csrf_token", tt.csrfToken)
 			code, _, body := ts.postForm(t, "/user/signup", form)
-			fmt.Println("============================")
-			fmt.Println(form)
-			fmt.Println("============================")
-			// fmt.Println(code)
-			fmt.Println("============================")
-			fmt.Println(body)
-			fmt.Println("============================")
 			assert.Equal(t, code, tt.wantCode)
 			if tt.wantFormTag != "" {
 				assert.StringContains(t, body, tt.wantFormTag)

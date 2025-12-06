@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"html"
 	"io"
 	"log/slog"
@@ -11,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +18,24 @@ import (
 	"github.com/alexedwards/scs/v2"
 	"github.com/go-playground/form/v4"
 )
+
+// Define a regular expression which captures the CSRF token value from the
+// HTML for our user signup page.
+var csrfTokenRX = regexp.MustCompile(`<input type='hidden' name='csrf_token' value='(.+)'>`)
+
+func extractCSRFToken(t *testing.T, body string) string {
+	// Use the FindStringSubmatch method to extract the token from the HTML body.
+	// Note that this returns an array with the entire matched pattern in the
+	// first position, and the values of any captured data in the subsequent
+	// positions.
+	// fmt.Println(body)c
+	matches := csrfTokenRX.FindStringSubmatch(body)
+	// fmt.Println(len(matches))
+	if len(matches) < 2 {
+		t.Fatal("no csrf token found in body")
+	}
+	return html.UnescapeString(matches[1])
+}
 
 // Create a newTestApplication helper which returns an instance of our
 // application struct containing mocked dependencies.
@@ -51,14 +69,21 @@ type testServer struct {
 // Create a newTestServer helper which initalizes and returns a new instance
 // of our custom testServer type.
 func newTestServer(t *testing.T, h http.Handler) *testServer {
+	// Initialize the test server as normal.
 	ts := httptest.NewTLSServer(h)
+	// Initialize a new cookie jar.
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	// Add the cookie jar to the test server client. Any response cookies will
+	// now be stored and sent with subsequent requests when using this client.
 	ts.Client().Jar = jar
-
+	// Disable redirect-following for the test server client by setting a custom
+	// CheckRedirect function. This function will be called whenever a 3xx
+	// response is received by the client, and by always returning a
+	// http.ErrUseLastResponse error it forces the client to immediately return
+	// the received response.
 	ts.Client().CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
@@ -82,39 +107,73 @@ func (ts *testServer) get(t *testing.T, urlPath string) (int, http.Header, strin
 	return rs.StatusCode, rs.Header, string(body)
 }
 
-// Define a regular expression which captures the CSRF token value from the
-// HTML for our user signup page.
-var csrfTokenRX = regexp.MustCompile(`<input type='hidden' name='csrf_token' value='(.+)'>`)
+// func (ts *testServer) postForm(t *testing.T, urlPath string, form url.Values) (int, http.Header, string) {
+// 	testURL := ts.URL + urlPath
+// 	// rs, err := ts.Client().PostForm(ts.URL+urlPath, form)
+// 	rs, err := ts.Client().PostForm(testURL, form)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	defer rs.Body.Close()
 
-func extractCSRFToken(t *testing.T, body string) string {
-	// Use the FindStringSubmatch method to extract the token from the HTML body.
-	// Note that this returns an array with the entire matched pattern in the
-	// first position, and the values of any captured data in the subsequent
-	// positions.
-	// fmt.Println(body)c
-	matches := csrfTokenRX.FindStringSubmatch(body)
-	// fmt.Println(len(matches))
-	if len(matches) < 2 {
-		t.Fatal("no csrf token found in body")
-	}
-	return html.UnescapeString(matches[1])
-}
+// 	body, err := io.ReadAll(rs.Body)
+// 	fmt.Println(body)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	body = bytes.TrimSpace(body)
+// 	// fmt.Println(string(body))
+// 	return rs.StatusCode, rs.Header, string(body)
+// }
+
+// Create a postForm method for sending POST requests to the test server. The
+// final parameter to this method is a url.Values object which can contain any
+// form data that you want to send in the request body.
+// func (ts *testServer) postForm(t *testing.T, urlPath string, form url.Values) (int, http.Header, string) {
+// 	rs, err := ts.Client().PostForm(ts.URL+urlPath, form)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	// Read the response body from the test server.
+// 	defer rs.Body.Close()
+// 	body, err := io.ReadAll(rs.Body)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	body = bytes.TrimSpace(body)
+// 	// Return the response status, headers and body.
+// 	return rs.StatusCode, rs.Header, string(body)
+// }
 
 func (ts *testServer) postForm(t *testing.T, urlPath string, form url.Values) (int, http.Header, string) {
-	testURL := ts.URL + urlPath
-	// rs, err := ts.Client().PostForm(ts.URL+urlPath, form)
-	rs, err := ts.Client().PostForm(testURL, form)
+	// 1. Create the request manually
+	req, err := http.NewRequest(http.MethodPost, ts.URL+urlPath, strings.NewReader(form.Encode()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rs.Body.Close()
 
-	body, err := io.ReadAll(rs.Body)
-	fmt.Println(body)
+	// 2. Add the Content-Type header (Mandatory for forms)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// 3. Add the Referer header (Mandatory for nosurf HTTPS checks)
+	req.Header.Set("Referer", ts.URL+urlPath)
+
+	// 4. Send the request
+	rs, err := ts.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// 5. Read the response body
+	defer rs.Body.Close()
+	body, err := io.ReadAll(rs.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Trim space (to match the book's behavior)
 	body = bytes.TrimSpace(body)
-	// fmt.Println(string(body))
+
+	// [cite_start]// 6. Return the status, headers, and BODY AS A STRING [cite: 1216]
 	return rs.StatusCode, rs.Header, string(body)
 }
